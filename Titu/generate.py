@@ -13,7 +13,7 @@ from database.db import db
 from Titu.start import USER_CLIENTS_CACHE
 
 # ----------------------------------------------------
-# 🎯 Custom In-built Ask Helper (No External Library)
+# 🎯 Custom Built-In Ask Helper System
 # ----------------------------------------------------
 async def ask_user(client: Client, chat_id: int, text: str, timeout: int = 600) -> Message:
     if not hasattr(client, "pending_requests"):
@@ -27,11 +27,11 @@ async def ask_user(client: Client, chat_id: int, text: str, timeout: int = 600) 
         response = await asyncio.wait_for(fut, timeout=timeout)
         return response
     except asyncio.TimeoutError:
-        raise TimeoutError("समय समाप्त हो गया (Timeout)")
+        raise TimeoutError("Timeout")
     finally:
         client.pending_requests.pop(chat_id, None)
 
-# Global message listener to capture replies
+# High-priority global listener for incoming OTP / prompt replies
 @Client.on_message(filters.private, group=-100)
 async def global_ask_listener(client: Client, message: Message):
     if hasattr(client, "pending_requests") and message.chat.id in client.pending_requests:
@@ -48,7 +48,7 @@ async def logout(client: Client, message: Message):
     user_id = message.from_user.id
     user_data = await db.get_session(user_id)  
     if user_data is None:
-        return await message.reply_text("<b>आप लॉग इन नहीं हैं!</b>")
+        return await message.reply_text("<b>ʏᴏᴜ ᴀʀᴇ ɴᴏᴛ ʟᴏɢɢᴇᴅ ɪɴ!</b>")
         
     await db.set_session(user_id, session=None)
     if user_id in USER_CLIENTS_CACHE:
@@ -58,7 +58,7 @@ async def logout(client: Client, message: Message):
             pass
         del USER_CLIENTS_CACHE[user_id]
         
-    await message.reply_text("<b>सफलतापूर्वक Logout हो गया! 🔒</b>")
+    await message.reply_text("<b>ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ ʟᴏɢɢᴇᴅ ᴏᴜᴛ! 🔒</b>")
 
 # ----------------------------------------------------
 # 🔑 Login Command
@@ -68,11 +68,11 @@ async def login(bot: Client, message: Message):
     user_id = message.from_user.id
     user_data = await db.get_session(user_id)
     if user_data is not None:
-        return await message.reply_text("<b>आप पहले से Logged In हैं। नया सेसन जोड़ने के लिए /logout करें।</b>")
+        return await message.reply_text("<b>ʏᴏᴜ ᴀʀᴇ ᴀʟʀᴇᴀᴅʏ ʟᴏɢɢᴇᴅ ɪɴ. ᴜꜱᴇ /logout ꜰɪʀꜱᴛ.</b>")
     
     try:
         # Step 1: Ask API ID
-        api_id_msg = await ask_user(bot, user_id, "<b>अपना API ID भेजें:\n\nयदि आप डिफॉल्ट उपयोग करना चाहते हैं तो /skip टाइप करें।</b>")
+        api_id_msg = await ask_user(bot, user_id, "<b>ꜱᴇɴᴅ ʏᴏᴜʀ API ID:\n\nꜱᴇɴᴅ /skip ᴛᴏ ᴜꜱᴇ ᴅᴇꜰᴀᴜʟᴛ.</b>")
         if api_id_msg.text == "/skip":
             api_id = API_ID
             api_hash = API_HASH
@@ -80,16 +80,16 @@ async def login(bot: Client, message: Message):
             try:
                 api_id = int(api_id_msg.text)
             except ValueError:
-                return await api_id_msg.reply("API ID अंक (Number) में होना चाहिए। फिर से /login करें।")
+                return await api_id_msg.reply("API ID must be an integer. Try /login again.")
                 
             # Step 2: Ask API HASH
-            api_hash_msg = await ask_user(bot, user_id, "<b>अब अपना API HASH भेजें:</b>")
+            api_hash_msg = await ask_user(bot, user_id, "<b>ɴᴏᴡ ꜱᴇɴᴅ ʏᴏᴜʀ API HASH:</b>")
             api_hash = api_hash_msg.text
             
         # Step 3: Ask Phone Number
-        phone_number_msg = await ask_user(bot, user_id, "<b>अपना फोन नंबर कंट्री कोड के साथ भेजें (जैसे: +919876543210):</b>")
+        phone_number_msg = await ask_user(bot, user_id, "<b>ꜱᴇɴᴅ ʏᴏᴜʀ ᴘʜᴏɴᴇ ɴᴜᴍʙᴇʀ ᴡɪᴛʜ ᴄᴏᴜɴᴛʀʏ ᴄᴏᴅᴇ (ᴇ.ɢ. +1234567890):</b>")
         if phone_number_msg.text == '/cancel':
-            return await phone_number_msg.reply('प्रक्रिया रद्द कर दी गई!')
+            return await phone_number_msg.reply('Process cancelled!')
             
         phone_number = phone_number_msg.text
         temp_client = Client(":memory:", api_id=api_id, api_hash=api_hash)
@@ -101,37 +101,37 @@ async def login(bot: Client, message: Message):
             phone_code_msg = await ask_user(
                 bot, 
                 user_id, 
-                "<b>Telegram OTP दर्ज करें।\n\nयदि आपका OTP `12345` है, तो इसे स्पेस देकर भेजें: `1 2 3 4 5`</b>", 
+                "<b>ᴇɴᴛᴇʀ Telegram OTP.\n\nɪꜰ OTP ɪꜱ <code>12345</code>, ꜱᴇɴᴅ ɪᴛ ᴀꜱ: <code>1 2 3 4 5</code></b>", 
                 timeout=600
             )
         except PhoneNumberInvalid:
             await temp_client.disconnect()
-            return await phone_number_msg.reply('अमान्य फोन नंबर!')
+            return await phone_number_msg.reply('Invalid phone number!')
 
         if phone_code_msg.text == '/cancel':
             await temp_client.disconnect()
-            return await phone_code_msg.reply('प्रक्रिया रद्द!')
+            return await phone_code_msg.reply('Process cancelled!')
 
         try:
             phone_code = phone_code_msg.text.replace(" ", "")
             await temp_client.sign_in(phone_number, code.phone_code_hash, phone_code)
         except PhoneCodeInvalid:
             await temp_client.disconnect()
-            return await phone_code_msg.reply('अमान्य OTP!')
+            return await phone_code_msg.reply('Invalid OTP!')
         except PhoneCodeExpired:
             await temp_client.disconnect()
-            return await phone_code_msg.reply('OTP समय समाप्त!')
+            return await phone_code_msg.reply('OTP expired!')
         except SessionPasswordNeeded:
-            # Step 5: Ask Two-Step Password if enabled
-            two_step_msg = await ask_user(bot, user_id, '<b>Two-Step Verification पासवर्ड दर्ज करें:</b>', timeout=300)
+            # Step 5: Ask Two-Step Password
+            two_step_msg = await ask_user(bot, user_id, '<b>ᴇɴᴛᴇʀ ʏᴏᴜʀ ᴛᴡᴏ-ꜱᴛᴇᴘ ᴠᴇʀɪꜰɪᴄᴀᴛɪᴏɴ ᴘᴀꜱꜱᴡᴏʀᴅ:</b>', timeout=300)
             if two_step_msg.text == '/cancel':
                 await temp_client.disconnect()
-                return await two_step_msg.reply('प्रक्रिया रद्द!')
+                return await two_step_msg.reply('Process cancelled!')
             try:
                 await temp_client.check_password(password=two_step_msg.text)
             except PasswordHashInvalid:
                 await temp_client.disconnect()
-                return await two_step_msg.reply('गलत पासवर्ड!')
+                return await two_step_msg.reply('Invalid password!')
 
         string_session = await temp_client.export_session_string()
         await temp_client.disconnect()
@@ -139,8 +139,8 @@ async def login(bot: Client, message: Message):
         await db.set_session(user_id, session=string_session)
         await db.set_api_credentials(user_id, api_id, api_hash)
         
-        await bot.send_message(user_id, "<b>🎉 आपका अकाउंट सफलतापूर्वक Login हो गया है!</b>")
+        await bot.send_message(user_id, "<b>🎉 ᴀᴄᴄᴏᴜɴᴛ ʟᴏɢɢᴇᴅ ɪɴ ꜱᴜᴄᴄᴇꜱꜱꜰᴜʟʟʏ!</b>")
     except TimeoutError:
-        await bot.send_message(user_id, "<b>❌ समय समाप्त हो गया। कृपया दोबारा /login करें।</b>")
+        await bot.send_message(user_id, "<b>❌ ᴛɪᴍᴇᴏᴜᴛ. ᴘʟᴇᴀꜱᴇ ᴛʀʏ /login ᴀɢᴀɪɴ.</b>")
     except Exception as e:
-        await bot.send_message(user_id, f"<b>एरर: {e}</b>")
+        await bot.send_message(user_id, f"<b>Error: {e}</b>")

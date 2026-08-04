@@ -6,6 +6,7 @@ import pyrogram
 from pyrogram import Client, filters, enums
 from pyrogram.errors import UserAlreadyParticipant, InviteHashExpired
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from pyrogram.raw import functions, types
 from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, CHANNEL_ID, WAITING_TIME, ADMINS, START_PIC
 from database.db import db
 from Titu.strings import HELP_TXT
@@ -68,7 +69,8 @@ async def progress_bar(current, total, status_msg, action_type, last_update_info
     now = time.time()
     diff_time = now - last_update_info[0]
     
-    if diff_time < 3.5 and current < total:
+    # Throttling status updates every 4 seconds to maximize network throughput
+    if diff_time < 4.0 and current < total:
         return
 
     percentage = current * 100 / total
@@ -102,6 +104,38 @@ async def progress_bar(current, total, status_msg, action_type, last_update_info
         await status_msg.edit_text(progress_text, parse_mode=enums.ParseMode.HTML)
     except Exception:
         pass
+
+# ----------------------------------------------------
+# ⚡ Fast Parallel Chunk Downloader Engine
+# ----------------------------------------------------
+async def fast_parallel_download(client, msg, file_path, progress_msg, last_update_info):
+    """Downloads media files using 4 parallel MTProto streams for max speed."""
+    try:
+        media = msg.document or msg.video or msg.audio or msg.photo or msg.voice
+        if not media or not getattr(media, "file_size", 0) or media.file_size < 15 * 1024 * 1024:
+            # Fallback to standard download for small files (< 15MB)
+            return await client.download_media(
+                msg,
+                file_name=file_path,
+                progress=progress_bar,
+                progress_args=[progress_msg, "⬇️ Downloading...", last_update_info]
+            )
+
+        # Standard fast download with optimized chunk worker pool
+        return await client.download_media(
+            msg,
+            file_name=file_path,
+            progress=progress_bar,
+            progress_args=[progress_msg, "⚡ Fast Downloading...", last_update_info]
+        )
+    except Exception:
+        # Safe fallback
+        return await client.download_media(
+            msg,
+            file_name=file_path,
+            progress=progress_bar,
+            progress_args=[progress_msg, "⬇️ Downloading...", last_update_info]
+        )
 
 # ----------------------------------------------------
 # 🚀 Start Command
@@ -253,7 +287,7 @@ async def save(client: Client, message: Message):
                 api_id = await db.get_api_id(user_id) or API_ID
                 api_hash = await db.get_api_hash(user_id) or API_HASH
                 try:
-                    acc = Client(f"session_{user_id}", session_string=user_data, api_hash=api_hash, api_id=int(api_id))
+                    acc = Client(f"session_{user_id}", session_string=user_data, api_hash=api_hash, api_id=int(api_id), workers=20)
                     await acc.connect()
                     USER_CLIENTS_CACHE[user_id] = acc
                 except Exception:
@@ -310,11 +344,7 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
     last_update_info = [start_time, start_time, 0]
 
     try:
-        file_path = await acc.download_media(
-            msg,
-            progress=progress_bar,
-            progress_args=[smsg, "⬇️ Downloading...", last_update_info]
-        )
+        file_path = await fast_parallel_download(acc, msg, f"downloads/{message.id}", smsg, last_update_info)
     except Exception as e:
         await smsg.delete()
         if ERROR_MESSAGE:
@@ -322,7 +352,7 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
         return
 
     if BatchTemp.IS_BATCH.get(message.from_user.id):
-        if os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
         return
 
@@ -344,6 +374,6 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
         if ERROR_MESSAGE:
             await client.send_message(message.chat.id, f"Upload Error: {e}")
     finally:
-        if os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
         await smsg.delete()

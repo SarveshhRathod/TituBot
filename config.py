@@ -1,6 +1,6 @@
 import os
 
-# Login feature configuration
+# Login system configuration
 LOGIN_SYSTEM = bool(os.environ.get('LOGIN_SYSTEM', True))
 
 if not LOGIN_SYSTEM:
@@ -19,12 +19,14 @@ ADMINS = [int(admin) for admin in os.environ.get("ADMINS", "6073523936").split()
 # Upload Channel ID (Optional)
 CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 
-# Multiple MongoDB URIs (Comma-separated for Multiple DB Load Balancing)
-# Example: "mongodb+srv://db1..., mongodb+srv://db2..."
+# Start Photo URL (Default image URL)
+START_PIC = os.environ.get("START_PIC", "https://i.ibb.co/dJ0gpJf1/photo-2025-06-16-12-07-05-7516517596376596504.jpg")
+
+# Multiple MongoDB URIs (Comma-separated)
 DB_URIS = os.environ.get("DB_URI", "").split(",")
 DB_NAME = os.environ.get("DB_NAME", "TituSaveBot")
 
-# Waiting time in seconds between message batches to prevent FloodWait
+# Waiting time in seconds between message batches
 WAITING_TIME = int(os.environ.get("WAITING_TIME", "5"))
 
 # Error reporting setting

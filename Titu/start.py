@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import asyncio 
 import pyrogram
 from pyrogram import Client, filters, enums
@@ -8,30 +9,93 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, CHANNEL_ID, WAITING_TIME, ADMINS
 from database.db import db
 from Titu.strings import HELP_TXT
-from bot import TechVJUser
 
-# Active user sessions cache in memory to speed up execution
+# Active user sessions cache in memory
 USER_CLIENTS_CACHE = {}
 
 class BatchTemp:
     IS_BATCH = {}
 
-# Fast In-Memory Throttled Progress Bar (No Disk Write)
-async def progress_bar(current, total, status_msg, action_type, last_update_time):
+# ----------------------------------------------------
+# 🛠️ Helper Functions for Progress Bar
+# ----------------------------------------------------
+def get_readable_size(bytes_size):
+    if not bytes_size:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    i = int(math.floor(math.log(bytes_size, 1024)))
+    p = math.pow(1024, i)
+    s = round(bytes_size / p, 2)
+    return f"{s} {units[i]}"
+
+def get_readable_time(seconds):
+    if seconds <= 0 or math.isnan(seconds) or math.isinf(seconds):
+        return "00:00"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+def make_progress_bar(percentage):
+    completed = int(percentage // 10)
+    remaining = 10 - completed
+    return "█" * completed + "░" * remaining
+
+# ----------------------------------------------------
+# 📊 Dynamic Speed & Progress Bar Function
+# ----------------------------------------------------
+async def progress_bar(current, total, status_msg, action_type, last_update_info):
+    # last_update_info = [last_update_time, start_time, last_bytes]
     now = time.time()
-    if now - last_update_time[0] < 4 and current < total:
+    diff_time = now - last_update_info[0]
+    
+    # Throttling status updates every 3.5 seconds to avoid Telegram rate-limits
+    if diff_time < 3.5 and current < total:
         return
-    
-    last_update_time[0] = now
+
     percentage = current * 100 / total
-    speed = current / (now - last_update_time[1] + 0.001)
+    elapsed_time = now - last_update_info[1]
     
-    progress_str = f"**{action_type}:** `{percentage:.1f}%`\n**Speed:** `{speed / 1024 / 1024:.2f} MB/s`"
+    # Real-time Speed Calculation
+    speed = (current - last_update_info[2]) / diff_time if diff_time > 0 else 0
+    if speed <= 0:
+        speed = current / elapsed_time if elapsed_time > 0 else 0
+
+    # Estimated Time Remaining (ETA)
+    eta = (total - current) / speed if speed > 0 else 0
+
+    # Save current state for next calculation
+    last_update_info[0] = now
+    last_update_info[2] = current
+
+    bar = make_progress_bar(percentage)
+    processed_str = get_readable_size(current)
+    total_str = get_readable_size(total)
+    speed_str = f"{get_readable_size(speed)}/s"
+    eta_str = get_readable_time(eta)
+
+    progress_text = (
+        f"˚₊· ͟͟͞͞➳❥ <b>ᴛɪᴛᴜ ᴘʀᴏɢʀᴇꜱꜱ ᴛʀᴀᴄᴋᴇʀ</b> ❤︎── .✦\n"
+        f"│\n"
+        f"├┈➤ <b>ꜱᴛᴀᴛᴜꜱ:</b> {action_type}\n"
+        f"├┈➤ <b>ᴘʀᴏɢʀᴇꜱꜱ:</b> [{bar}] <code>{percentage:.1f}%</code>\n"
+        f"│\n"
+        f"├┈➤ <b>ᴘʀᴏᴄᴇꜱꜱᴇᴅ:</b> <code>{processed_str}</code> / <code>{total_str}</code>\n"
+        f"├┈➤ <b>ꜱᴘᴇᴇᴅ:</b> <code>{speed_str}</code>\n"
+        f"├┈➤ <b>ᴇᴛᴀ:</b> <code>{eta_str}</code>\n"
+        f"│\n"
+        f"╰┈➤ <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
+    )
+
     try:
-        await status_msg.edit_text(progress_str)
+        await status_msg.edit_text(progress_text, parse_mode=enums.ParseMode.HTML)
     except Exception:
         pass
 
+# ----------------------------------------------------
+# 🚀 Bot Commands
+# ----------------------------------------------------
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
     if not await db.is_user_exist(message.from_user.id):
@@ -42,9 +106,24 @@ async def send_start(client: Client, message: Message):
     ]]
     reply_markup = InlineKeyboardMarkup(buttons)
     
+    start_text = (
+        f"˚₊· ͟͟͞͞➳❥ <b>ᴛɪᴛᴜ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ꜱᴀᴠᴇʀ</b> ❤︎── .✦\n"
+        f"│\n"
+        f"├┈➤ ʜᴇʟʟᴏ {message.from_user.mention}!\n"
+        f"├┈➤ ɪ ᴀᴍ ʏᴏᴜʀ ʜᴇʟᴘᴇʀ ʙᴏᴛ.\n"
+        f"│\n"
+        f"├┈➤ ᴄᴏᴍᴍᴀɴᴅꜱ:\n"
+        f"┊   ├─ /login - Login account\n"
+        f"┊   ├─ /logout - Delete session\n"
+        f"┊   ╰─ /help - How to use\n"
+        f"│\n"
+        f"╰┈➤ <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
+    )
+    
     await message.reply_text(
-        text=f"<b>👋 नमस्ते {message.from_user.mention},\n\nमैं Titu Bot हूँ। मैं Telegram की प्रतिबंधित (Restricted) सामग्री डाउनलोड कर सकता हूँ।\n\nशुरू करने के लिए /login करें या सहायता के लिए /help देखें।</b>", 
+        text=start_text, 
         reply_markup=reply_markup,
+        parse_mode=enums.ParseMode.HTML,
         quote=True
     )
 
@@ -63,6 +142,9 @@ async def send_cancel(client: Client, message: Message):
     BatchTemp.IS_BATCH[message.from_user.id] = True
     await message.reply_text("<b>❌ आपका चल रहा कार्य सफलतापूर्वक रद्द कर दिया गया है।</b>")
 
+# ----------------------------------------------------
+# 📥 Message & Link Handler
+# ----------------------------------------------------
 @Client.on_message(filters.text & filters.private)
 async def save(client: Client, message: Message):
     if ("https://t.me/+" in message.text or "https://t.me/joinchat/" in message.text) and not LOGIN_SYSTEM:
@@ -136,6 +218,9 @@ async def save(client: Client, message: Message):
 
         BatchTemp.IS_BATCH[message.from_user.id] = True
 
+# ----------------------------------------------------
+# 📤 Private Content Transfer Handler
+# ----------------------------------------------------
 async def handle_private(client: Client, acc, message: Message, chatid, msgid: int):
     msg = await acc.get_messages(chatid, msgid)
     if not msg or msg.empty:
@@ -146,15 +231,16 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
     if msg.text:
         return await client.send_message(dest_chat, msg.text, entities=msg.entities)
 
-    smsg = await client.send_message(message.chat.id, "⚡ डाउनलोडिंग शुरू हो रही है...")
+    smsg = await client.send_message(message.chat.id, "⚡ <b>प्रोसेसिंग शुरू हो रही है...</b>", parse_mode=enums.ParseMode.HTML)
     start_time = time.time()
-    last_update_time = [start_time, start_time]
+    # last_update_info = [last_update_time, start_time, last_bytes]
+    last_update_info = [start_time, start_time, 0]
 
     try:
         file_path = await acc.download_media(
             msg,
             progress=progress_bar,
-            progress_args=[smsg, "Downloading", last_update_time]
+            progress_args=[smsg, "⬇️ Downloading...", last_update_info]
         )
     except Exception as e:
         await smsg.delete()
@@ -167,16 +253,16 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
             os.remove(file_path)
         return
 
-    last_update_time = [time.time(), time.time()]
+    last_update_info = [time.time(), time.time(), 0]
     caption = msg.caption or ""
 
     try:
         if msg.document:
-            await client.send_document(dest_chat, file_path, caption=caption, progress=progress_bar, progress_args=[smsg, "Uploading", last_update_time])
+            await client.send_document(dest_chat, file_path, caption=caption, progress=progress_bar, progress_args=[smsg, "⬆️ Uploading...", last_update_info])
         elif msg.video:
-            await client.send_video(dest_chat, file_path, caption=caption, progress=progress_bar, progress_args=[smsg, "Uploading", last_update_time])
+            await client.send_video(dest_chat, file_path, caption=caption, progress=progress_bar, progress_args=[smsg, "⬆️ Uploading...", last_update_info])
         elif msg.audio:
-            await client.send_audio(dest_chat, file_path, caption=caption, progress=progress_bar, progress_args=[smsg, "Uploading", last_update_time])
+            await client.send_audio(dest_chat, file_path, caption=caption, progress=progress_bar, progress_args=[smsg, "⬆️ Uploading...", last_update_info])
         elif msg.photo:
             await client.send_photo(dest_chat, file_path, caption=caption)
         elif msg.voice:

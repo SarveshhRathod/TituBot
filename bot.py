@@ -1,4 +1,6 @@
+import asyncio
 from pyrogram import Client
+from pyrogram.errors import FloodWait
 from config import API_ID, API_HASH, BOT_TOKEN, STRING_SESSION, LOGIN_SYSTEM
 
 if STRING_SESSION and not LOGIN_SYSTEM:
@@ -10,19 +12,29 @@ else:
 class Bot(Client):
     def __init__(self):
         super().__init__(
-            "TituBot",
+            "TituNewBot",  # Session name changed to remove old session cache
             api_id=API_ID,
             api_hash=API_HASH,
             bot_token=BOT_TOKEN,
             plugins=dict(root="Titu"),
             workers=100,
-            sleep_threshold=10
+            sleep_threshold=15
         )
         self.pending_requests = {}
 
     async def start(self):
-        await super().start()
-        print('✅ Titu Bot Successfully Started! Powered by @SarveshAsatkarr')
+        try:
+            await super().start()
+            print('✅ Titu Bot Successfully Started! Powered by @SarveshAsatkarr')
+        except FloodWait as e:
+            print(f'⚠️ Telegram FloodWait: Waiting for {e.value} seconds...')
+            await asyncio.sleep(e.value)
+            try:
+                await super().start()
+            except Exception as err:
+                print(f"Error after FloodWait: {err}")
+        except Exception as e:
+            print(f"Startup Error: {e}")
 
     async def stop(self, *args):
         await super().stop()

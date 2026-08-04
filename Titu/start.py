@@ -4,20 +4,42 @@ import math
 import asyncio 
 import pyrogram
 from pyrogram import Client, filters, enums
-from pyrogram.errors import UserAlreadyParticipant, InviteHashExpired, UsernameNotOccupied
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message 
-from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, CHANNEL_ID, WAITING_TIME, ADMINS
+from pyrogram.errors import UserAlreadyParticipant, InviteHashExpired
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, CHANNEL_ID, WAITING_TIME, ADMINS, START_PIC
 from database.db import db
 from Titu.strings import HELP_TXT
 
-# Active user sessions cache in memory
 USER_CLIENTS_CACHE = {}
 
 class BatchTemp:
     IS_BATCH = {}
 
 # ----------------------------------------------------
-# 🛠️ Helper Functions for Progress Bar
+# 🧹 Auto-Purge Chat Cleaner System (1-2 Messages Max)
+# ----------------------------------------------------
+USER_CHAT_HISTORY = {}
+
+async def purge_chat(client: Client, chat_id: int, new_msg_id: int, keep_count: int = 2):
+    if chat_id not in USER_CHAT_HISTORY:
+        USER_CHAT_HISTORY[chat_id] = []
+    
+    USER_CHAT_HISTORY[chat_id].append(new_msg_id)
+    
+    while len(USER_CHAT_HISTORY[chat_id]) > keep_count:
+        old_id = USER_CHAT_HISTORY[chat_id].pop(0)
+        try:
+            await client.delete_messages(chat_id, old_id)
+        except Exception:
+            pass
+
+def register_msg(chat_id: int, msg_id: int):
+    if chat_id not in USER_CHAT_HISTORY:
+        USER_CHAT_HISTORY[chat_id] = []
+    USER_CHAT_HISTORY[chat_id].append(msg_id)
+
+# ----------------------------------------------------
+# 📊 Dynamic Speed & Progress Bar
 # ----------------------------------------------------
 def get_readable_size(bytes_size):
     if not bytes_size:
@@ -42,30 +64,21 @@ def make_progress_bar(percentage):
     remaining = 10 - completed
     return "█" * completed + "░" * remaining
 
-# ----------------------------------------------------
-# 📊 Dynamic Speed & Progress Bar Function
-# ----------------------------------------------------
 async def progress_bar(current, total, status_msg, action_type, last_update_info):
-    # last_update_info = [last_update_time, start_time, last_bytes]
     now = time.time()
     diff_time = now - last_update_info[0]
     
-    # Throttling status updates every 3.5 seconds to avoid Telegram rate-limits
     if diff_time < 3.5 and current < total:
         return
 
     percentage = current * 100 / total
     elapsed_time = now - last_update_info[1]
-    
-    # Real-time Speed Calculation
     speed = (current - last_update_info[2]) / diff_time if diff_time > 0 else 0
     if speed <= 0:
         speed = current / elapsed_time if elapsed_time > 0 else 0
 
-    # Estimated Time Remaining (ETA)
     eta = (total - current) / speed if speed > 0 else 0
 
-    # Save current state for next calculation
     last_update_info[0] = now
     last_update_info[2] = current
 
@@ -76,16 +89,13 @@ async def progress_bar(current, total, status_msg, action_type, last_update_info
     eta_str = get_readable_time(eta)
 
     progress_text = (
-        f"˚₊· ͟͟͞͞➳❥ <b>ᴛɪᴛᴜ ᴘʀᴏɢʀᴇꜱꜱ ᴛʀᴀᴄᴋᴇʀ</b> ❤︎── .✦\n"
-        f"│\n"
-        f"├┈➤ <b>ꜱᴛᴀᴛᴜꜱ:</b> {action_type}\n"
-        f"├┈➤ <b>ᴘʀᴏɢʀᴇꜱꜱ:</b> [{bar}] <code>{percentage:.1f}%</code>\n"
-        f"│\n"
-        f"├┈➤ <b>ᴘʀᴏᴄᴇꜱꜱᴇᴅ:</b> <code>{processed_str}</code> / <code>{total_str}</code>\n"
-        f"├┈➤ <b>ꜱᴘᴇᴇᴅ:</b> <code>{speed_str}</code>\n"
-        f"├┈➤ <b>ᴇᴛᴀ:</b> <code>{eta_str}</code>\n"
-        f"│\n"
-        f"╰┈➤ <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
+        f"» <b>ᴛɪᴛᴜ ᴘʀᴏɢʀᴇꜱꜱ ᴛʀᴀᴄᴋᴇʀ</b>\n\n"
+        f"➻ <b>ꜱᴛᴀᴛᴜꜱ:</b> {action_type}\n"
+        f"➻ <b>ᴘʀᴏɢʀᴇꜱꜱ:</b> [{bar}] <code>{percentage:.1f}%</code>\n"
+        f"➻ <b>ᴘʀᴏᴄᴇꜱꜱᴇᴅ:</b> <code>{processed_str}</code> / <code>{total_str}</code>\n"
+        f"➻ <b>ꜱᴘᴇᴇᴅ:</b> <code>{speed_str}</code>\n"
+        f"➻ <b>ᴇᴛᴀ:</b> <code>{eta_str}</code>\n\n"
+        f"» <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
     )
 
     try:
@@ -94,42 +104,93 @@ async def progress_bar(current, total, status_msg, action_type, last_update_info
         pass
 
 # ----------------------------------------------------
-# 🚀 Bot Commands
+# 🚀 Start Command
 # ----------------------------------------------------
 @Client.on_message(filters.command(["start"]))
 async def send_start(client: Client, message: Message):
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(message.from_user.id, message.from_user.first_name)
     
-    buttons = [[
-        InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SarveshAsatkarr")
-    ]]
+    buttons = [
+        [
+            InlineKeyboardButton("✨ Help", callback_data="help_btn"),
+            InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SarveshAsatkarr")
+        ]
+    ]
     reply_markup = InlineKeyboardMarkup(buttons)
     
     start_text = (
-        f"˚₊· ͟͟͞͞➳❥ <b>ᴛɪᴛᴜ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ꜱᴀᴠᴇʀ</b> ❤︎── .✦\n"
-        f"│\n"
-        f"├┈➤ ʜᴇʟʟᴏ {message.from_user.mention}!\n"
-        f"├┈➤ ɪ ᴀᴍ ʏᴏᴜʀ ʜᴇʟᴘᴇʀ ʙᴏᴛ.\n"
-        f"│\n"
-        f"├┈➤ ᴄᴏᴍᴍᴀɴᴅꜱ:\n"
-        f"┊   ├─ /login - Login account\n"
-        f"┊   ├─ /logout - Delete session\n"
-        f"┊   ╰─ /help - How to use\n"
-        f"│\n"
-        f"╰┈➤ <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
+        f"» <b>ʜᴇʟʟᴏ {message.from_user.mention}!</b>\n\n"
+        f"ɪ ᴀᴍ <b>ᴛɪᴛᴜ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ ꜱᴀᴠᴇʀ ʙᴏᴛ</b>.\n"
+        f"ɪ ᴄᴀɴ ᴅᴏᴡɴʟᴏᴀᴅ ᴀɴᴅ ꜱᴀᴠᴇ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ ꜰᴏʀ ʏᴏᴜ.\n\n"
+        f"➻ <b>ᴄᴏᴍᴍᴀɴᴅꜱ:</b>\n"
+        f"  » /login - ʟᴏɢɪɴ ᴀᴄᴄᴏᴜɴᴛ\n"
+        f"  » /logout - ᴅᴇʟᴇᴛᴇ ꜱᴇꜱꜱɪᴏɴ\n"
+        f"  » /help - ʜᴇʟᴘ ɢᴜɪᴅᴇ\n\n"
+        f"» <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
     )
     
-    await message.reply_text(
-        text=start_text, 
-        reply_markup=reply_markup,
-        parse_mode=enums.ParseMode.HTML,
-        quote=True
+    await purge_chat(client, message.chat.id, message.id, keep_count=2)
+
+    if START_PIC:
+        sent_msg = await message.reply_photo(
+            photo=START_PIC,
+            caption=start_text,
+            reply_markup=reply_markup,
+            parse_mode=enums.ParseMode.HTML,
+            quote=True
+        )
+    else:
+        sent_msg = await message.reply_text(
+            text=start_text,
+            reply_markup=reply_markup,
+            parse_mode=enums.ParseMode.HTML,
+            quote=True
+        )
+    
+    register_msg(message.chat.id, sent_msg.id)
+
+# ----------------------------------------------------
+# 🔄 Callback Queries (Help & Back Buttons)
+# ----------------------------------------------------
+@Client.on_callback_query(filters.regex("^help_btn$"))
+async def help_callback(client: Client, callback_query: CallbackQuery):
+    buttons = [[InlineKeyboardButton("🔙 Back", callback_data="start_btn")]]
+    await callback_query.message.edit_caption(
+        caption=HELP_TXT,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=enums.ParseMode.HTML
+    )
+
+@Client.on_callback_query(filters.regex("^start_btn$"))
+async def start_callback(client: Client, callback_query: CallbackQuery):
+    buttons = [
+        [
+            InlineKeyboardButton("✨ Help", callback_data="help_btn"),
+            InlineKeyboardButton("👨‍💻 Developer", url="https://t.me/SarveshAsatkarr")
+        ]
+    ]
+    start_text = (
+        f"» <b>ʜᴇʟʟᴏ {callback_query.from_user.mention}!</b>\n\n"
+        f"ɪ ᴀᴍ <b>ᴛɪᴛᴜ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ ꜱᴀᴠᴇʀ ʙᴏᴛ</b>.\n"
+        f"ɪ ᴄᴀɴ ᴅᴏᴡɴʟᴏᴀᴅ ᴀɴᴅ ꜱᴀᴠᴇ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ ꜰᴏʀ ʏᴏᴜ.\n\n"
+        f"➻ <b>ᴄᴏᴍᴍᴀɴᴅꜱ:</b>\n"
+        f"  » /login - ʟᴏɢɪɴ ᴀᴄᴄᴏᴜɴᴛ\n"
+        f"  » /logout - ᴅᴇʟᴇᴛᴇ ꜱᴇꜱꜱɪᴏɴ\n"
+        f"  » /help - ʜᴇʟᴘ ɢᴜɪᴅᴇ\n\n"
+        f"» <b>ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> @SarveshAsatkarr"
+    )
+    await callback_query.message.edit_caption(
+        caption=start_text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=enums.ParseMode.HTML
     )
 
 @Client.on_message(filters.command(["help"]))
 async def send_help(client: Client, message: Message):
-    await message.reply_text(HELP_TXT, parse_mode=enums.ParseMode.HTML)
+    await purge_chat(client, message.chat.id, message.id, keep_count=2)
+    sent_msg = await message.reply_text(HELP_TXT, parse_mode=enums.ParseMode.HTML)
+    register_msg(message.chat.id, sent_msg.id)
 
 @Client.on_message(filters.command(["stats"]) & filters.user(ADMINS))
 async def show_stats(client: Client, message: Message):
@@ -140,30 +201,37 @@ async def show_stats(client: Client, message: Message):
 @Client.on_message(filters.command(["cancel"]))
 async def send_cancel(client: Client, message: Message):
     BatchTemp.IS_BATCH[message.from_user.id] = True
-    await message.reply_text("<b>❌ आपका चल रहा कार्य सफलतापूर्वक रद्द कर दिया गया है।</b>")
+    await message.reply_text("<b>❌ ʏᴏᴜʀ ᴏɴɢᴏɪɴɢ ᴛᴀꜱᴋ ʜᴀꜱ ʙᴇᴇɴ ᴄᴀɴᴄᴇʟʟᴇᴅ.</b>")
 
 # ----------------------------------------------------
 # 📥 Message & Link Handler
 # ----------------------------------------------------
 @Client.on_message(filters.text & filters.private)
 async def save(client: Client, message: Message):
+    await purge_chat(client, message.chat.id, message.id, keep_count=2)
+
     if ("https://t.me/+" in message.text or "https://t.me/joinchat/" in message.text) and not LOGIN_SYSTEM:
         if TechVJUser is None:
-            return await message.reply_text("String Session सेट नहीं है।")
+            return await message.reply_text("String Session is not set.")
         try:
             await TechVJUser.join_chat(message.text)
-            await message.reply_text("चैट सफलतापूर्वक जॉइन कर ली गई है।")
+            sent_msg = await message.reply_text("Chat joined successfully.")
+            register_msg(message.chat.id, sent_msg.id)
         except UserAlreadyParticipant:
-            await message.reply_text("चैट पहले से जॉइन है।")
+            sent_msg = await message.reply_text("Chat already joined.")
+            register_msg(message.chat.id, sent_msg.id)
         except InviteHashExpired:
-            await message.reply_text("अमान्य (Invalid) लिंक।")
+            sent_msg = await message.reply_text("Invalid invite link.")
+            register_msg(message.chat.id, sent_msg.id)
         except Exception as e:
             await message.reply_text(f"Error: {e}")
         return
 
     if "https://t.me/" in message.text:
         if BatchTemp.IS_BATCH.get(message.from_user.id) == False:
-            return await message.reply_text("<b>⚠️ आपका एक टास्क पहले से चल रहा है। कृपया प्रतीक्षा करें या /cancel का उपयोग करें।</b>")
+            sent_msg = await message.reply_text("<b>⚠️ ᴀ ᴛᴀꜱᴋ ɪꜱ ᴀʟʀᴇᴀᴅʏ ᴘʀᴏᴄᴇꜱꜱɪɴɢ. ᴘʟᴇᴀꜱᴇ ᴡᴀɪᴛ ᴏʀ ᴜꜱᴇ /cancel</b>")
+            register_msg(message.chat.id, sent_msg.id)
+            return
         
         datas = message.text.split("/")
         temp = datas[-1].replace("?single", "").split("-")
@@ -178,7 +246,9 @@ async def save(client: Client, message: Message):
             else:
                 user_data = await db.get_session(user_id)
                 if not user_data:
-                    return await message.reply_text("<b>प्रतिबंधित सामग्री डाउनलोड करने के लिए कृपया पहले /login करें।</b>")
+                    sent_msg = await message.reply_text("<b>ᴘʟᴇᴀꜱᴇ /login ꜰɪʀꜱᴛ ᴛᴏ ᴅᴏᴡɴʟᴏᴀᴅ ʀᴇꜱᴛʀɪᴄᴛᴇᴅ ᴄᴏɴᴛᴇɴᴛ.</b>")
+                    register_msg(message.chat.id, sent_msg.id)
+                    return
                 
                 api_id = await db.get_api_id(user_id) or API_ID
                 api_hash = await db.get_api_hash(user_id) or API_HASH
@@ -187,10 +257,14 @@ async def save(client: Client, message: Message):
                     await acc.connect()
                     USER_CLIENTS_CACHE[user_id] = acc
                 except Exception:
-                    return await message.reply_text("<b>आपका सेसन एक्सपायर हो गया है। कृपया फिर से /login करें।</b>")
+                    sent_msg = await message.reply_text("<b>ʏᴏᴜʀ ꜱᴇꜱꜱɪᴏɴ ᴇxᴘɪʀᴇᴅ. ᴘʟᴇᴀꜱᴇ /login ᴀɢᴀɪɴ.</b>")
+                    register_msg(message.chat.id, sent_msg.id)
+                    return
         else:
             if TechVJUser is None:
-                return await message.reply_text("String Session सेट नहीं है।")
+                sent_msg = await message.reply_text("String Session is not set.")
+                register_msg(message.chat.id, sent_msg.id)
+                return
             acc = TechVJUser
 
         BatchTemp.IS_BATCH[message.from_user.id] = False
@@ -231,9 +305,8 @@ async def handle_private(client: Client, acc, message: Message, chatid, msgid: i
     if msg.text:
         return await client.send_message(dest_chat, msg.text, entities=msg.entities)
 
-    smsg = await client.send_message(message.chat.id, "⚡ <b>प्रोसेसिंग शुरू हो रही है...</b>", parse_mode=enums.ParseMode.HTML)
+    smsg = await client.send_message(message.chat.id, "⚡ <b>ᴘʀᴏᴄᴇꜱꜱɪɴɢ ꜱᴛᴀʀᴛᴇᴅ...</b>", parse_mode=enums.ParseMode.HTML)
     start_time = time.time()
-    # last_update_info = [last_update_time, start_time, last_bytes]
     last_update_info = [start_time, start_time, 0]
 
     try:

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: titu-telegram-bot
+    env: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app & python3 bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: ADMINS
+        sync: false
+      - key: DB_URI
+        sync: false
+      - key: LOGIN_SYSTEM
+        value: "True"
+      - key: WAITING_TIME
+        value: "5"

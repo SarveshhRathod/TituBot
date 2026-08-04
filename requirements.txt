@@ -1,0 +1,8 @@
+pyrofork>=2.3.60
+tgcrypto>=1.2.5
+motor>=3.3.2
+Flask>=3.0.0
+gunicorn>=21.2.0
+Jinja2>=3.1.2
+Werkzeug>=3.0.1
+itsdangerous>=2.1.2
